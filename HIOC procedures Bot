@@ -1,0 +1,305 @@
+// ==UserScript==
+// @name         HIOC procedures Bot (FINAL - IDs + No Date Touch)
+// @namespace    hioc.bot.final
+// @version      2.0
+// @description  Drugs & Supplies only. Type CODE directly. No login. No submit. Ignore subcategory. Never touch date. Click Add with validation bypass.
+// @match        https://serviceprovider.hiocdis.org/*
+// @grant        none
+// @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
+// ==/UserScript==
+
+(function () {
+  "use strict";
+
+  /***************** IDs ثابتة من عندك *****************/
+  const IDS = {
+  codeInput: "ContentPlaceHolder1_txtServiceID", // كود الإجراء
+  qtyInput: "ContentPlaceHolder1_txtCount",// الكمية
+  addBtn: "ContentPlaceHolder1_btnAdd"// إضافة
+   };
+
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  function logTo(el, msg) {
+    if (!el) return;
+    el.textContent += msg + "\n";
+    el.scrollTop = el.scrollHeight;
+  }
+
+  function click(el) {
+    if (!el) return;
+    el.dispatchEvent(new MouseEvent("mousedown", { bubbles: true }));
+    el.dispatchEvent(new MouseEvent("mouseup", { bubbles: true }));
+    el.click?.();
+  }
+
+  function setInputById(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return false;
+    el.focus();
+    el.value = "";
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.value = value;
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.blur();
+    return true;
+  }
+
+  function setSelectValue(id, value) {
+    const el = document.getElementById(id);
+    if (!el) return false;
+    el.value = value;
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    return true;
+  }
+
+  // منع Enter يعمل أي postback غير مرغوب
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  }, true);
+
+  /***************** اختيار التصنيف الرئيسي فقط (بدون التصنيف الفرعي) *****************/
+  function pickMainCategory(type) {
+    // type: "drugs" | "supplies"
+    const container = document.getElementById(IDS.mainCategoryChosen);
+    if (!container) return false;
+
+    const trigger = container.querySelector("a.chzn-single, a");
+    click(trigger);
+
+    const label = (type === "drugs") ? "ادوية" : "مستلزمات";
+    const li = Array.from(container.querySelectorAll("li"))
+      .find(x => (x.textContent || "").includes(label));
+
+    if (li) {
+      click(li);
+      return true;
+    }
+    return false;
+  }
+
+  /***************** خصم: للأدوية فقط *****************/
+  function setDiscount(origin) {
+    // 15 = محلى ، 7 = مستورد ، 0 = لا يوجد
+    if (origin === "local") return setSelectValue(IDS.discountSelect, "15");
+    if (origin === "imported") return setSelectValue(IDS.discountSelect, "7");
+    return setSelectValue(IDS.discountSelect, "0");
+  }
+
+  /*****************
+   * أهم نقطة: اضغط إضافة بدون ما المنظومة توقفك عند التاريخ
+   * (تعطيل مؤقت لـ WebForms client validation فقط)
+   *****************/
+  async function clickAddWithoutValidation() {
+    const btn = document.getElementById(IDS.addBtn);
+    if (!btn) return false;
+
+    const oldPCV = window.Page_ClientValidate;
+    const oldVUD = window.ValidatorUpdateDisplay;
+    const oldVIV = window.ValidatorUpdateIsValid;
+
+    try {
+      if (typeof window.Page_ClientValidate === "function") window.Page_ClientValidate = () => true;
+      if (typeof window.ValidatorUpdateDisplay === "function") window.ValidatorUpdateDisplay = () => {};
+      if (typeof window.ValidatorUpdateIsValid === "function") window.ValidatorUpdateIsValid = () => {};
+
+      const form = btn.closest("form") || document.querySelector("form");
+      if (form) form.noValidate = true;
+      btn.setAttribute("formnovalidate", "formnovalidate");
+
+      click(btn);
+      await sleep(350);
+      return true;
+    } finally {
+      if (oldPCV !== undefined) window.Page_ClientValidate = oldPCV;
+      if (oldVUD !== undefined) window.ValidatorUpdateDisplay = oldVUD;
+      if (oldVIV !== undefined) window.ValidatorUpdateIsValid = oldVIV;
+    }
+  }
+
+  /***************** Excel parser (أدوية/مستلزمات فقط) *****************/
+function parseExcel(file) {
+  return new Promise((resolve) => {
+    const reader = new FileReader();
+
+    reader.onload = (e) => {
+      const data = new Uint8Array(e.target.result);
+      const wb = XLSX.read(data, { type: "array" });
+
+      const CODE_HEADERS = [
+        "كود","كود الاجراء","كود الخدمة","رمز",
+        "id","code","service","serviceid"
+      ];
+      const QTY_HEADERS = [
+        "الكمية","العدد","عدد","qty","quantity","count","جلسات"
+      ];
+
+      const norm = (s) =>
+        (s ?? "").toString().trim().toLowerCase().replace(/\s+/g," ");
+
+      const safeNum = (v) => {
+        if (v == null) return null;
+        const n = Number(v.toString().replace(/,/g,""));
+        return Number.isFinite(n) ? n : null;
+      };
+
+      function findHeaderRow(mat) {
+        let bestRow = 0, bestScore = -1;
+        const max = Math.min(mat.length, 20);
+
+        for (let r = 0; r < max; r++) {
+          const rowText = norm((mat[r] || []).join(" | "));
+          let score = 0;
+          if (CODE_HEADERS.some(h => rowText.includes(norm(h)))) score += 2;
+          if (QTY_HEADERS.some(h => rowText.includes(norm(h)))) score += 1;
+          if (score > bestScore) {
+            bestScore = score;
+            bestRow = r;
+          }
+        }
+        return bestRow;
+      }
+
+      function findCol(row, headers) {
+        const r = row.map(x => norm(x));
+        for (let i = 0; i < r.length; i++) {
+          if (headers.some(h => r[i].includes(norm(h)))) return i;
+        }
+        return null;
+      }
+
+      const items = [];
+
+      for (const sh of wb.SheetNames) {
+        const ws = wb.Sheets[sh];
+        const mat = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "" });
+        if (!mat.length) continue;
+
+        const hr = findHeaderRow(mat);
+        const header = mat[hr] || [];
+
+        const codeCol = findCol(header, CODE_HEADERS);
+        const qtyCol = findCol(header, QTY_HEADERS);
+
+        if (codeCol == null || qtyCol == null) continue;
+
+        for (let r = hr + 1; r < mat.length; r++) {
+          const row = mat[r] || [];
+          const code = row[codeCol]?.toString().trim();
+          if (!code) continue;
+
+          const qty = safeNum(row[qtyCol]);
+          if (!qty || qty <= 0) continue;
+
+          items.push({ code, qty });
+        }
+      }
+
+      resolve(items);
+    };
+
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+
+  /***************** إضافة بند واحد *****************/
+ async function addProcedure(item, logEl) {
+
+  // كود الإجراء (بيعمل postback)
+  if (!setInputById(IDS.codeInput, item.code)) {
+    logTo(logEl, "❌ خانة كود الإجراء غير موجودة");
+    return false;
+  }
+  await sleep(500);
+
+  // الكمية
+  if (!setInputById(IDS.qtyInput, item.qty)) {
+    logTo(logEl, "❌ خانة الكمية غير موجودة");
+    return false;
+  }
+  await sleep(200);
+
+  // إضافة بدون validation وبدون لمس التاريخ
+  const ok = await clickAddWithoutValidation();
+  await sleep(800);
+
+  if (!ok) {
+    logTo(logEl, "❌ زر الإضافة غير موجود");
+    return false;
+  }
+
+  logTo(logEl, `✅ تمت إضافة الإجراء: ${item.code}`);
+  return true;
+}
+
+
+  /***************** UI *****************/
+  function mountUI() {
+    const box = document.createElement("div");
+    box.style.cssText =
+      "position:fixed;bottom:15px;right:15px;z-index:99999;background:#111;color:#fff;padding:12px;border-radius:10px;width:360px;font-family:Arial";
+    box.innerHTML = `
+      <b>HIOC Bot (اجراءات ONLY)</b>
+      <div style="font-size:12px;opacity:.9;line-height:1.5;margin-top:6px">
+        ✅ يكتب بالكود مباشرة • ✅ إضافة فقط • ❌ لا Submit • ❌ لا تاريخ • ❌ لا تصنيف فرعي
+      </div>
+      <div style="margin-top:10px">
+        <input type="file" id="f" multiple accept=".xlsx,.xls" style="width:100%">
+      </div>
+      <div style="margin-top:10px;display:flex;gap:8px">
+        <button id="s" type="button" style="flex:1;padding:8px;font-weight:bold;cursor:pointer">Start</button>
+        <button id="x" type="button" style="padding:8px 12px;font-weight:bold;cursor:pointer">Stop</button>
+      </div>
+      <pre id="l" style="margin-top:10px;max-height:200px;overflow:auto;background:#000;padding:8px;border-radius:8px"></pre>
+    `;
+    document.body.appendChild(box);
+
+    const logEl = box.querySelector("#l");
+    const fileEl = box.querySelector("#f");
+    const start = box.querySelector("#s");
+    const stop = box.querySelector("#x");
+    let stopFlag = false;
+
+    stop.onclick = () => {
+      stopFlag = true;
+      logTo(logEl, "⛔ تم الإيقاف.");
+    };
+
+    start.onclick = async () => {
+      stopFlag = false;
+      logEl.textContent = "";
+
+      const files = Array.from(fileEl.files || []);
+      if (!files.length) {
+        logTo(logEl, "⚠️ اختاري ملفات Excel أولاً.");
+        return;
+      }
+
+      for (const f of files) {
+        if (stopFlag) break;
+
+        const items = await parseExcel(f);
+        logTo(logEl, `📄 ${f.name}: ${items.length} بند`);
+
+        for (const it of items) {
+          if (stopFlag) break;
+          logTo(logEl, `→ جاري إدخال: ${it.code}`);
+          await addProcedure(it, logEl);
+
+          await sleep(250);
+        }
+      }
+
+      logTo(logEl, "✔️ انتهى.");
+    };
+  }
+
+  mountUI();
+
+})();
