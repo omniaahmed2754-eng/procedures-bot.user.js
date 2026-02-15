@@ -2,7 +2,7 @@
 // @name         HIOC procedures Bot (FINAL - IDs + No Date Touch)
 // @namespace    hioc.bot.final
 // @version      2.0
-// @description  Drugs & Supplies only. Type CODE directly. No login. No submit. Ignore subcategory. Never touch date. Click Add with validation bypass.
+// @description  HIOC procedures only. Type CODE directly. No login. No submit. Ignore subcategory. Never touch date. Click Add with validation bypass.
 // @match        https://serviceprovider.hiocdis.org/*
 // @grant        none
 // @require      https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js
