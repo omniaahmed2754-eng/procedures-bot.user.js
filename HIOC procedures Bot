@@ -11,11 +11,10 @@
 (function () {
   "use strict";
 
-  /***************** IDs ثابتة من عندك *****************/
   const IDS = {
-  codeInput: "ContentPlaceHolder1_txtServiceID", // كود الإجراء
-  qtyInput: "ContentPlaceHolder1_txtCount",// الكمية
-  addBtn: "ContentPlaceHolder1_btnAdd"// إضافة
+  codeInput: "ContentPlaceHolder1_txtServiceID",  
+  qtyInput: "ContentPlaceHolder1_txtCount",// 
+  addBtn: "ContentPlaceHolder1_btnAdd"// 
    };
 
 
@@ -63,7 +62,6 @@
     }
   }, true);
 
-  /***************** اختيار التصنيف الرئيسي فقط (بدون التصنيف الفرعي) *****************/
   function pickMainCategory(type) {
     // type: "drugs" | "supplies"
     const container = document.getElementById(IDS.mainCategoryChosen);
@@ -83,7 +81,6 @@
     return false;
   }
 
-  /***************** خصم: للأدوية فقط *****************/
   function setDiscount(origin) {
     // 15 = محلى ، 7 = مستورد ، 0 = لا يوجد
     if (origin === "local") return setSelectValue(IDS.discountSelect, "15");
